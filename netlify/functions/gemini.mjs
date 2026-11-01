@@ -66,10 +66,12 @@ export default async (req) => {
     });
 
   } catch (error) {
-    return Response.json(
-      { error: "Erreur du serveur Uhq IA." },
-      { status: 500 }
-    );
-  }
-};
+  console.error("UH Q IA ERROR:", error);
 
+  return Response.json(
+    {
+      error: error.message || "Erreur inconnue du serveur."
+    },
+    { status: 500 }
+  );
+}
