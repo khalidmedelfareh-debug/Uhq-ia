@@ -27,7 +27,7 @@ export default async (req) => {
 
     const url =
       const url =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
+     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 
     let response;
     let data;
