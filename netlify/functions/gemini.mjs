@@ -13,21 +13,20 @@ export default async (req) => {
 
     if (!apiKey) {
       return Response.json(
-        { error: "Clé Gemini manquante sur Netlify." },
+        { error: "Clé Gemini absente dans Netlify." },
         { status: 500 }
       );
     }
 
     if (typeof message !== "string" || !message.trim()) {
       return Response.json(
-        { error: "Écris un message avant d'envoyer." },
+        { error: "Écris un message valide." },
         { status: 400 }
       );
     }
 
     const url =
-      const url =
-     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
+      "https://generativelanguage.googleapis.com/v1beta/interactions";
 
     let response;
     let data;
@@ -40,19 +39,15 @@ export default async (req) => {
           "x-goog-api-key": apiKey
         },
         body: JSON.stringify({
-          systemInstruction: {
-            parts: [{
-              text: "Tu es Uhq IA, une intelligence artificielle utile, intelligente, claire et sympathique. Tu réponds en français sauf demande contraire. Tes réponses sont naturelles, précises et faciles à comprendre."
-            }]
+          model: "gemini-3.8-flash",
+          input: message.trim(),
+          system_instruction:
+            "Tu es Uhq IA, une intelligence artificielle utile, intelligente, claire et sympathique. Tu réponds en français sauf demande contraire. Tu donnes des réponses naturelles, précises et faciles à comprendre. Tu adaptes la longueur de tes réponses à la question.",
+          generation_config: {
+            thinking_level: "medium",
+            max_output_tokens: 1200
           },
-          contents: [{
-            role: "user",
-            parts: [{ text: message.trim() }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1200
-          }
+          store: false
         })
       });
 
@@ -64,6 +59,8 @@ export default async (req) => {
         .includes(response.status);
 
       if (!temporaryError || attempt === 2) {
+        console.error("Gemini API:", data);
+
         return Response.json(
           {
             error: data.error?.message || "Erreur Gemini."
@@ -77,14 +74,22 @@ export default async (req) => {
       );
     }
 
-    const answer = data.candidates?.[0]?.content?.parts
-      ?.map(part => part.text || "")
+    const answer = (data.output || [])
+      .filter(item => item.type === "text")
+      .map(item => item.text || "")
       .join("")
       .trim();
 
-    return Response.json({
-      answer: answer || "Je n'ai pas pu générer de réponse."
-    });
+    if (!answer) {
+      console.error("Réponse Gemini sans texte:", data);
+
+      return Response.json(
+        { error: "Gemini n'a pas renvoyé de texte." },
+        { status: 502 }
+      );
+    }
+
+    return Response.json({ answer });
 
   } catch (error) {
     console.error("UHQ IA ERROR:", error);
