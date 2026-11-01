@@ -7,95 +7,87 @@ export default async (req) => {
     );
   }
 
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    return Response.json(
+      { error: "Clé API Gemini manquante." },
+      { status: 500 }
+    );
+  }
+
   try {
     const { message } = await req.json();
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return Response.json(
-        { error: "Clé Gemini absente dans Netlify." },
-        { status: 500 }
-      );
-    }
 
     if (typeof message !== "string" || !message.trim()) {
       return Response.json(
-        { error: "Écris un message valide." },
+        { error: "Message invalide." },
         { status: 400 }
       );
     }
 
-    const url =
-      "https://generativelanguage.googleapis.com/v1beta/interactions";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
 
     let response;
-    let data;
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          model: "gemini-3.8-flash",
-          input: message.trim(),
-          system_instruction:
-            "Tu es Uhq IA, une intelligence artificielle utile, intelligente, claire et sympathique. Tu réponds en français sauf demande contraire. Tu donnes des réponses naturelles, précises et faciles à comprendre. Tu adaptes la longueur de tes réponses à la question.",
-          generation_config: {
-            thinking_level: "medium",
-            max_output_tokens: 1200
+    try {
+      response = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey
           },
-          store: false
-        })
-      });
-
-      data = await response.json();
-
-      if (response.ok) break;
-
-      const temporaryError = [429, 500, 502, 503, 504]
-        .includes(response.status);
-
-      if (!temporaryError || attempt === 2) {
-        console.error("Gemini API:", data);
-
-        return Response.json(
-          {
-            error: data.error?.message || "Erreur Gemini."
-          },
-          { status: response.status }
-        );
-      }
-
-      await new Promise(resolve =>
-        setTimeout(resolve, 800 * (attempt + 1))
+          body: JSON.stringify({
+            model: "gemini-3.8-flash",
+            input: message.trim(),
+            system_instruction:
+              "Tu es Uhq IA, une intelligence artificielle utile, intelligente, claire et sympathique. Réponds en français sauf demande contraire. Donne des réponses naturelles, précises et adaptées à la question.",
+            generation_config: {
+              thinking_level: "low",
+              max_output_tokens: 1000
+            },
+            store: false,
+            stream: true
+          }),
+          signal: controller.signal
+        }
       );
+    } finally {
+      clearTimeout(timeout);
     }
 
-    const answer = (data.output || [])
-      .filter(item => item.type === "text")
-      .map(item => item.text || "")
-      .join("")
-      .trim();
-
-    if (!answer) {
-      console.error("Réponse Gemini sans texte:", data);
+    if (!response.ok) {
+      const errorData = await response.json();
 
       return Response.json(
-        { error: "Gemini n'a pas renvoyé de texte." },
-        { status: 502 }
+        {
+          error: errorData.error?.message || "Erreur Gemini."
+        },
+        { status: response.status }
       );
     }
 
-    return Response.json({ answer });
+    return new Response(response.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      }
+    });
 
   } catch (error) {
-    console.error("UHQ IA ERROR:", error);
+    console.error("UHQ IA:", error);
 
     return Response.json(
-      { error: "Problème temporaire du serveur Uhq IA." },
+      {
+        error: error.name === "AbortError"
+          ? "Gemini met trop de temps à répondre."
+          : "Erreur du serveur Uhq IA."
+      },
       { status: 500 }
     );
   }
