@@ -18,7 +18,7 @@ function showPhoto(event) {
     }
 
     selectedPhotos.push({
-      file: file,
+      file,
       url: URL.createObjectURL(file)
     });
   });
@@ -45,6 +45,7 @@ function updatePreview() {
     const remove = document.createElement("button");
     remove.textContent = "×";
     remove.type = "button";
+
     remove.onclick = () => {
       URL.revokeObjectURL(selectedPhotos[index].url);
       selectedPhotos.splice(index, 1);
@@ -66,11 +67,12 @@ async function sendMessage() {
   if (!text && selectedPhotos.length === 0) return;
 
   if (!text && selectedPhotos.length > 0) {
-    alert("L'analyse des photos arrive bientôt. Ajoute une question écrite !");
+    alert("Ajoute une question écrite pour continuer.");
     return;
   }
 
-  document.getElementById("welcome").style.display = "none";
+  const welcome = document.getElementById("welcome");
+  if (welcome) welcome.style.display = "none";
 
   const user = document.createElement("div");
   user.className = "message user";
@@ -82,8 +84,9 @@ async function sendMessage() {
   bot.textContent = "Uhq IA réfléchit... 👑";
   messages.appendChild(bot);
 
-  const photos = [...selectedPhotos];
-  photos.forEach(photo => URL.revokeObjectURL(photo.url));
+  selectedPhotos.forEach(photo =>
+    URL.revokeObjectURL(photo.url)
+  );
   selectedPhotos = [];
   updatePreview();
 
@@ -91,23 +94,98 @@ async function sendMessage() {
   messages.scrollTop = messages.scrollHeight;
 
   try {
-    const response = await fetch("/.netlify/functions/gemini", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ message: text })
-    });
-
-    const data = await response.json();
+    const response = await fetch(
+      "/.netlify/functions/gemini",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+        },
+        body: JSON.stringify({ message: text })
+      }
+    );
 
     if (!response.ok) {
-      throw new Error(data.error || "Erreur du serveur");
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.error || "Erreur du serveur."
+      );
     }
 
-    bot.textContent = data.answer || "Je n'ai pas reçu de réponse.";
+    if (!response.body) {
+      throw new Error("Flux de réponse indisponible.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+    let fullAnswer = "";
+
+    bot.textContent = "";
+
+    function processEvent(block) {
+      const lines = block.split(/\r?\n/);
+      const dataLines = lines
+        .filter(line => line.startsWith("data:"))
+        .map(line => line.slice(5).trim());
+
+      if (!dataLines.length) return;
+
+      const rawData = dataLines.join("\n");
+
+      if (rawData === "[DONE]") return;
+
+      try {
+        const event = JSON.parse(rawData);
+
+        if (
+          event.event_type === "step.delta" &&
+          event.delta?.type === "text"
+        ) {
+          fullAnswer += event.delta.text || "";
+          bot.textContent = fullAnswer;
+          messages.scrollTop = messages.scrollHeight;
+        }
+
+        if (event.error?.message) {
+          throw new Error(event.error.message);
+        }
+
+      } catch (error) {
+        if (error instanceof SyntaxError) return;
+        throw error;
+      }
+    }
+
+    while (true) {
+      const { value, done } = await reader.read();
+
+      buffer += decoder.decode(value || new Uint8Array(), {
+        stream: !done
+      });
+
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || "";
+
+      for (const block of blocks) {
+        processEvent(block);
+      }
+
+      if (done) break;
+    }
+
+    if (buffer.trim()) {
+      processEvent(buffer);
+    }
+
+    if (!fullAnswer.trim()) {
+      throw new Error("Uhq IA n'a reçu aucune réponse.");
+    }
 
   } catch (error) {
+    console.error("UHQ IA:", error);
     bot.textContent = "Erreur : " + error.message;
   }
 
@@ -119,19 +197,26 @@ function newChat() {
   const welcome = document.getElementById("welcome");
 
   messages.innerHTML = "";
+
   if (welcome) {
     messages.appendChild(welcome);
     welcome.style.display = "block";
   }
 
-  selectedPhotos.forEach(photo => URL.revokeObjectURL(photo.url));
+  selectedPhotos.forEach(photo =>
+    URL.revokeObjectURL(photo.url)
+  );
+
   selectedPhotos = [];
   updatePreview();
 }
 
-document.getElementById("input").addEventListener("keydown", function(event) {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    sendMessage();
+document.getElementById("input").addEventListener(
+  "keydown",
+  function(event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
   }
-});
+);
